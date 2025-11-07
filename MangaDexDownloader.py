@@ -113,7 +113,10 @@ def batchUrlToImg():
         if file_CBZ.get() == 1 and image_folders:
             output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
             os.makedirs(output_folder, exist_ok=True)
-            output_cbz_path = os.path.join(output_folder, f"Volume {volume}.cbz")
+
+            volume_str = str(volume).zfill(2)
+
+            output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
             convert_images_to_cbz(image_folders, output_cbz_path)
 
     messagebox.showinfo("Finished!", "All chapters have been processed.")
@@ -158,7 +161,11 @@ def UrlToImg(image_folders=None):
             app.title("Loading images...")
             for i, image_name in enumerate(chapter_data):
                 linkimg = str(baseUrl) + "/data/" + str(chapter_hash) + "/" + str(image_name)
-                output_name = f"Page_{i+1}.png"
+
+                chapter_str = str(chapter_num).zfill(3)
+                page_str = str(i + 1).zfill(2)
+
+                output_name = f"Ch{chapter_str}_Page{page_str}.png"
                 image_path = os.path.join(image_folder, output_name)
 
                 # Download the image
