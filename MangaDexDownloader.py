@@ -19,9 +19,11 @@ import re
 import zipfile
 import glob
 from ratelimit import limits, sleep_and_retry
+import xml.etree.ElementTree as ET
 
 myappid = 'frnono.manga.downloader'
-ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+if os.name == 'nt':
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -39,7 +41,7 @@ print("PDF(fast) is a lot faster, as the name implies. If you want the PDF forma
 print("PDF(slow) is pretty much useless, in some rare cases it looks better (a LOT slower)")
 print("CBZ is probably the ideal format if you have a dedicated reader\n")
 
-path = f"{os.environ['UserProfile']}/Downloads/"
+path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
 mangadex_api = r"https://api.mangadex.org/at-home/server/"
 chapter_id = ""
 link = ""
@@ -59,7 +61,7 @@ def ChangeDirec():
     global path
     path = str(askdirectory(title='Select Folder') + "/")
     if path == "/":
-        path = f"{os.environ['UserProfile']}/Downloads/"
+        path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
     app.title(path)
 
 def get_start_end():
@@ -82,6 +84,9 @@ def get_chap_id():
     chapter_id = link
     UrlToImg()
 
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
 def batchUrlToImg():
     global chapter_id, mangadex_api
 
@@ -98,17 +103,20 @@ def batchUrlToImg():
             volumes[volume] = []
         volumes[volume].append(chapter)
 
+    volume_manga_title = ""
+    author = ""
     for volume, chapters in volumes.items():
         image_folders = []
-        volume_manga_title = ""
         for i, chapter in enumerate(chapters):
-            os.system("cls")
+            clear_screen()
             print(f"Processing Volume {volume}, Chapter {i + 1} / {len(chapters)}")
             chapter_id = chapter['id']
             # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
-            manga_title, image_folder = UrlToImg(image_folders)
-            if manga_title:
+            manga_title, image_folder, chapter_author = UrlToImg(image_folders)
+            if manga_title and not volume_manga_title:
                 volume_manga_title = manga_title
+            if chapter_author and not author:
+                author = chapter_author
 
         if file_CBZ.get() == 1 and image_folders:
             output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
@@ -117,7 +125,8 @@ def batchUrlToImg():
             volume_str = str(volume).zfill(2)
 
             output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
-            convert_images_to_cbz(image_folders, output_cbz_path)
+            comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
+            convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path)
 
     messagebox.showinfo("Finished!", "All chapters have been processed.")
 
@@ -133,7 +142,7 @@ def download_image(url, image_path):
 def UrlToImg(image_folders=None):
     global chapter_id, mangadex_api
     try:
-        manga_title, chapter_title, chapter_num = get_manga_title_from_chapter(chapter_id)
+        manga_title, chapter_title, chapter_num, author = get_manga_title_from_chapter(chapter_id)
         print(manga_title)
         if chapter_title: print(chapter_title)
         mangadex_api = r"https://api.mangadex.org/at-home/server/" + chapter_id
@@ -206,21 +215,18 @@ def UrlToImg(image_folders=None):
                 output_folder = os.path.join(path, str(manga_title), "CBZ")
                 os.makedirs(output_folder, exist_ok=True)
 
-                if chapter_title:
-                    output_cbz_path = os.path.join(output_folder, f"Chapter {chapter_num} - {chapter_title}.cbz")
-                else:
-                    output_cbz_path = os.path.join(output_folder, f"Chapter {chapter_num}.cbz")
-
-                convert_images_to_cbz([image_folder], output_cbz_path)
+                output_cbz_path = os.path.join(output_folder, f"{manga_title} - Chapter {chapter_num}.cbz")
+                comic_info_path = create_comic_info(output_folder, manga_title, author, None)
+                convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
 
 
         print("Finished!")
         app.title("Finished!")
-        return manga_title, image_folder
+        return manga_title, image_folder, author
 
     except Exception as e:
         print(f"Error:", e)
-        return None, None
+        return None, None, None
 
 def get_manga_title_from_chapter(chapter_id):
     chapter_url = f"https://api.mangadex.org/chapter/{chapter_id}"
@@ -239,7 +245,7 @@ def get_manga_title_from_chapter(chapter_id):
                 manga_id = relationship["id"]
                 break
 
-        manga_title = get_manga_title(manga_id)
+        manga_title, author = get_manga_title(manga_id)
         chapter_title = data["data"]["attributes"]["title"]
         chapter_num = data["data"]["attributes"]["chapter"]
         if manga_title:
@@ -248,10 +254,10 @@ def get_manga_title_from_chapter(chapter_id):
         if chapter_title:
             chapter_title = remove_invalid(chapter_title)
 
-        return manga_title, chapter_title, chapter_num
+        return manga_title, chapter_title, chapter_num, author
     else:
         print(f"Error: {response.status_code}")
-        return None
+        return None, None, None, None
 
 def get_manga_title(manga_id):
     manga_url = f"https://api.mangadex.org/manga/{manga_id}"
@@ -259,21 +265,27 @@ def get_manga_title(manga_id):
         "Accept": "application/vnd.api+json",
     }
     params = {
+        "includes[]": "author"
     }
 
     response  = make_request(manga_url, headers=headers, params=params)
 
     if response.status_code == 200:
         data = response.json()
+        author = "Unknown"
+        for relationship in data["data"]["relationships"]:
+            if relationship["type"] == "author":
+                author = relationship["attributes"]["name"]
+                break
         try:
             title = data["data"]["attributes"]["title"]["en"]
-            return title
+            return title, author
         except:
             title = data["data"]["attributes"]["title"]["ja-ro"]
-            return title
+            return title, author
     else:
         print(f"Error: {response.status_code}")
-        return None
+        return None, None
 
 def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, translatedLanguage="en",
                      contentRating=["safe", "suggestive", "erotica", "pornographic"]):
@@ -343,6 +355,25 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
 
     return chapter_list
 
+def create_comic_info(output_folder, series, author, volume):
+    comic_info = ET.Element('ComicInfo', {'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema', 'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'})
+
+    series_element = ET.SubElement(comic_info, 'Series')
+    series_element.text = series
+
+    writer_element = ET.SubElement(comic_info, 'Writer')
+    writer_element.text = author
+
+    if volume is not None:
+        volume_element = ET.SubElement(comic_info, 'Volume')
+        volume_element.text = str(volume)
+
+    tree = ET.ElementTree(comic_info)
+
+    file_path = os.path.join(output_folder, 'ComicInfo.xml')
+    tree.write(file_path, encoding='utf-8', xml_declaration=True)
+    return file_path
+
 def convert_images_to_pdf_fast(folder_path, output_path, chapter_title, chapter_num):
 
     print("Creating pdf (fast)...")
@@ -406,11 +437,12 @@ def convert_images_to_pdf_slow(folder_path, output_path, chapter_title, chatpter
         c.setTitle(chatpter_num)
     c.save()
 
-def convert_images_to_cbz(folder_paths, output_path):
+def convert_images_to_cbz(folder_paths, output_path, comic_info_path):
     print("Creating CBZ...")
     app.title("Creating CBZ...")
 
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as cbz_file:
+        cbz_file.write(comic_info_path, 'ComicInfo.xml')
         for folder_path in folder_paths:
             image_files = [f for f in glob.glob(os.path.join(folder_path, '*.png'))] + \
                           [f for f in glob.glob(os.path.join(folder_path, '*.jpg'))] + \
