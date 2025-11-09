@@ -513,7 +513,7 @@ file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"), 
 file_CBZ.grid(row=0, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
 file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c"))
-file_MOBI.grid(row=0, column=3, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
+file_MOBI.grid(row=1, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 file_MOBI.configure(state="disabled")
 
 entry = customtkinter.CTkEntry(app, placeholder_text="Enter manga/chapter id...")
