@@ -20,6 +20,7 @@ import zipfile
 import glob
 from ratelimit import limits, sleep_and_retry
 import xml.etree.ElementTree as ET
+import subprocess
 
 myappid = 'frnono.manga.downloader'
 if os.name == 'nt':
@@ -128,6 +129,8 @@ def batchUrlToImg():
             comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
             convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path)
             os.remove(comic_info_path)
+            if file_MOBI.get() == 1:
+                convert_cbz_to_mobi(output_cbz_path)
 
     messagebox.showinfo("Finished!", "All chapters have been processed.")
 
@@ -220,6 +223,8 @@ def UrlToImg(image_folders=None):
                 comic_info_path = create_comic_info(output_folder, manga_title, author, None)
                 convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
                 os.remove(comic_info_path)
+                if file_MOBI.get() == 1:
+                    convert_cbz_to_mobi(output_cbz_path)
 
 
         print("Finished!")
@@ -451,6 +456,42 @@ def convert_images_to_cbz(folder_paths, output_path, comic_info_path):
                           [f for f in glob.glob(os.path.join(folder_path, '*.jpeg'))]
             for image_file in image_files:
                 cbz_file.write(image_file, os.path.basename(image_file))
+def convert_cbz_to_mobi(cbz_file):
+    print("Converting to MOBI...")
+    app.title("Converting to MOBI...")
+
+    cbz_dir = os.path.dirname(cbz_file)
+    mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
+    output_file = os.path.join(cbz_dir, mobi_filename)
+
+    try:
+        subprocess.run([
+            "kcc-c2e.exe",
+            os.path.basename(cbz_file),
+            "-p", "KO",
+            "-f", "MOBI",
+            "--forcecolor",
+            "--eraserainbow",
+            "-u",
+            "-m",
+            "--blackborders",
+            "-o", output_file
+        ], cwd=cbz_dir, check=True)
+        print("MOBI conversion successful!")
+        app.title("MOBI conversion successful!")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during MOBI conversion: {e}")
+        app.title("MOBI conversion failed!")
+    except FileNotFoundError:
+        print("kcc-c2e.exe not found. Please ensure it's in your system's PATH.")
+        app.title("kcc-c2e.exe not found!")
+
+def toggle_mobi_switch():
+    if file_CBZ.get() == 1:
+        file_MOBI.configure(state="normal")
+    else:
+        file_MOBI.deselect()
+        file_MOBI.configure(state="disabled")
 
 # Gui section
 app = customtkinter.CTk()
@@ -468,8 +509,12 @@ file_PDF_fast.grid(row=0, column=0, columnspan=1, padx=(10, 0), pady=(10, 0), st
 file_PDF_slow = customtkinter.CTkSwitch(app, text="PDF (slow)", progress_color=("#ffed9c"))
 file_PDF_slow.grid(row=0, column=1, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
-file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"))
+file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"), command=toggle_mobi_switch)
 file_CBZ.grid(row=0, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
+
+file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c"))
+file_MOBI.grid(row=0, column=3, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
+file_MOBI.configure(state="disabled")
 
 entry = customtkinter.CTkEntry(app, placeholder_text="Enter manga/chapter id...")
 entry.grid(row=3, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
