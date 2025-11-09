@@ -127,6 +127,7 @@ def batchUrlToImg():
             output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
             comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
             convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path)
+            os.remove(comic_info_path)
 
     messagebox.showinfo("Finished!", "All chapters have been processed.")
 
@@ -218,6 +219,7 @@ def UrlToImg(image_folders=None):
                 output_cbz_path = os.path.join(output_folder, f"{manga_title} - Chapter {chapter_num}.cbz")
                 comic_info_path = create_comic_info(output_folder, manga_title, author, None)
                 convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
+                os.remove(comic_info_path)
 
 
         print("Finished!")
