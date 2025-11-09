@@ -43,6 +43,7 @@ print("PDF(slow) is pretty much useless, in some rare cases it looks better (a L
 print("CBZ is probably the ideal format if you have a dedicated reader\n")
 
 path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
+kcc_path = ""
 mangadex_api = r"https://api.mangadex.org/at-home/server/"
 chapter_id = ""
 link = ""
@@ -64,6 +65,17 @@ def ChangeDirec():
     if path == "/":
         path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
     app.title(path)
+
+def SelectKCCPath():
+    global kcc_path
+    selected_path = askdirectory(title='Select KCC Folder')
+    if selected_path:
+        kcc_executable = os.path.join(selected_path, 'kcc-c2e.exe')
+        if os.path.exists(kcc_executable):
+            kcc_path = selected_path
+            messagebox.showinfo("KCC Path", f"KCC path set to: {kcc_path}")
+        else:
+            messagebox.showerror("Error", "kcc-c2e.exe not found in the selected folder.")
 
 def get_start_end():
     try:
@@ -460,14 +472,20 @@ def convert_cbz_to_mobi(cbz_file):
     print("Converting to MOBI...")
     app.title("Converting to MOBI...")
 
-    cbz_dir = os.path.dirname(cbz_file)
-    mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
-    output_file = os.path.join(cbz_dir, mobi_filename)
+    if not kcc_path:
+        messagebox.showerror("Error", "KCC path not set. Please select the KCC folder first.")
+        return
 
     try:
+        temp_cbz_path = os.path.join(kcc_path, "temp.cbz")
+        import shutil
+        shutil.copy(cbz_file, temp_cbz_path)
+
+        output_mobi_path = os.path.join(kcc_path, "output.mobi")
+
         subprocess.run([
-            "kcc-c2e.exe",
-            cbz_file,
+            os.path.join(kcc_path, "kcc-c2e.exe"),
+            "temp.cbz",
             "-p", "KO",
             "-f", "MOBI",
             "--forcecolor",
@@ -475,16 +493,27 @@ def convert_cbz_to_mobi(cbz_file):
             "-u",
             "-m",
             "--blackborders",
-            "-o", output_file
-        ], cwd=cbz_dir, check=True)
+            "-o", "output.mobi"
+        ], cwd=kcc_path, check=True)
+
+        final_mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
+        final_mobi_path = os.path.join(os.path.dirname(cbz_file), final_mobi_filename)
+        shutil.move(output_mobi_path, final_mobi_path)
+
+        os.remove(temp_cbz_path)
+
         print("MOBI conversion successful!")
         app.title("MOBI conversion successful!")
+
     except subprocess.CalledProcessError as e:
         print(f"Error during MOBI conversion: {e}")
         app.title("MOBI conversion failed!")
     except FileNotFoundError:
-        print("kcc-c2e.exe not found. Please ensure it's in your system's PATH.")
+        print("kcc-c2e.exe not found in the specified KCC path.")
         app.title("kcc-c2e.exe not found!")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        app.title("An unexpected error occurred!")
 
 def toggle_mobi_switch():
     if file_CBZ.get() == 1:
@@ -527,6 +556,9 @@ entry_end.grid(row=2, column=1, columnspan=1, padx=(10, 0), pady=(0, 20), sticky
 
 main_button_1 = customtkinter.CTkButton(master=app, text="Change Directory", fg_color="transparent", hover_color=("#242323"), border_width=2, command=ChangeDirec)
 main_button_1.grid(row=0, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
+
+kcc_button = customtkinter.CTkButton(master=app, text="Select KCC Path", fg_color="transparent", hover_color=("#242323"), border_width=2, command=SelectKCCPath)
+kcc_button.grid(row=1, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
 
 main_button_2 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Go!", hover_color=("#242323"), border_width=2, command=get_chap_id)
 main_button_2.grid(row=3, column=3, padx=(20, 10), pady=(0, 0), sticky="se")
