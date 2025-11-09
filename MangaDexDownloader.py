@@ -467,7 +467,7 @@ def convert_cbz_to_mobi(cbz_file):
     try:
         subprocess.run([
             "kcc-c2e.exe",
-            os.path.basename(cbz_file),
+            cbz_file,
             "-p", "KO",
             "-f", "MOBI",
             "--forcecolor",
