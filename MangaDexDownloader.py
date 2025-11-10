@@ -103,48 +103,69 @@ def clear_screen():
 def batchUrlToImg():
     global chapter_id, mangadex_api
 
-    start_chapter, end_chapter = get_start_end()
+    main_button_3.configure(state="disabled")
+    progress_dialog = ProgressDialog(app)
+    try:
+        progress_dialog.update_progress("", "", "", "Fetching chapter list...", 0)
 
-    link = entry.get()
-    manga_id = link
-    chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
+        start_chapter, end_chapter = get_start_end()
 
-    volumes = {}
-    for chapter in chapter_list:
-        volume = chapter['volume']
-        if volume not in volumes:
-            volumes[volume] = []
-        volumes[volume].append(chapter)
+        link = entry.get()
+        manga_id = link
+        chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
 
-    volume_manga_title = ""
-    author = ""
-    for volume, chapters in volumes.items():
-        image_folders = []
-        for i, chapter in enumerate(chapters):
-            clear_screen()
-            print(f"Processing Volume {volume}, Chapter {i + 1} / {len(chapters)}")
-            chapter_id = chapter['id']
-            # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
-            manga_title, image_folder, chapter_author = UrlToImg(image_folders)
-            if manga_title and not volume_manga_title:
-                volume_manga_title = manga_title
-            if chapter_author and not author:
-                author = chapter_author
+        volumes = {}
+        for chapter in chapter_list:
+            volume = chapter['volume']
+            if volume not in volumes:
+                volumes[volume] = []
+            volumes[volume].append(chapter)
 
-        if file_CBZ.get() == 1 and image_folders:
-            output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
-            os.makedirs(output_folder, exist_ok=True)
+        volume_manga_title = ""
+        author = ""
+        total_chapters = len(chapter_list)
+        processed_chapters = 0
+        for volume, chapters in volumes.items():
+            image_folders = []
+            for i, chapter in enumerate(chapters):
+                if progress_dialog.cancelled:
+                    progress_dialog.destroy()
+                    return
 
-            volume_str = str(volume).zfill(2)
+                clear_screen()
 
-            output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
-            comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
-            convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path)
-            os.remove(comic_info_path)
-            if file_MOBI.get() == 1:
-                convert_cbz_to_mobi(output_cbz_path)
+                chapter_id = chapter['id']
+                # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
+                manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders, volume)
+                if manga_title and not volume_manga_title:
+                    volume_manga_title = manga_title
+                if chapter_author and not author:
+                    author = chapter_author
 
-    messagebox.showinfo("Finished!", "All chapters have been processed.")
+                processed_chapters += 1
+                progress = processed_chapters / total_chapters
+                progress_dialog.update_progress(volume_manga_title, volume, f"Ch. {chapter['chapter']}", f"Downloading Chapter {i + 1} / {len(chapters)}", progress)
+
+            if file_CBZ.get() == 1 and image_folders:
+                output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
+                os.makedirs(output_folder, exist_ok=True)
+
+                volume_str = str(volume).zfill(2)
+
+                output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
+                comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
+
+                progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
+                convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path, progress_dialog)
+                os.remove(comic_info_path)
+
+                if file_MOBI.get() == 1:
+                    progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Converting to MOBI...", progress)
+                    convert_cbz_to_mobi(output_cbz_path, progress_dialog)
+
+        progress_dialog.complete()
+    finally:
+        main_button_3.configure(state="normal")
 
 def download_image(url, image_path):
     headers = {
@@ -155,12 +176,16 @@ def download_image(url, image_path):
     with open(image_path, 'wb') as f:
         f.write(response.content)
 
-def UrlToImg(image_folders=None):
+def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
     global chapter_id, mangadex_api
     try:
         manga_title, chapter_title, chapter_num, author = get_manga_title_from_chapter(chapter_id)
-        print(manga_title)
-        if chapter_title: print(chapter_title)
+        if progress_dialog:
+            progress_dialog.update_progress(manga_title, volume, chapter_num, "Getting chapter info...", 0)
+        else:
+            print(manga_title)
+            if chapter_title: print(chapter_title)
+
         mangadex_api = r"https://api.mangadex.org/at-home/server/" + chapter_id
         r = urlopen(mangadex_api)
         data_json = json.loads(r.read())
@@ -182,8 +207,10 @@ def UrlToImg(image_folders=None):
         with ThreadPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
             download_tasks = []
 
-            print("Loading images...")
-            app.title("Loading images...")
+            if not progress_dialog:
+                print("Loading images...")
+                app.title("Loading images...")
+
             for i, image_name in enumerate(chapter_data):
                 linkimg = str(baseUrl) + "/data/" + str(chapter_hash) + "/" + str(image_name)
 
@@ -198,12 +225,19 @@ def UrlToImg(image_folders=None):
                 download_tasks.append(download_task)
 
             # Wait for all download tasks to complete
-            print("Downloading images...\n")
-            app.title("Downloading images...")
+            if not progress_dialog:
+                print("Downloading images...\n")
+                app.title("Downloading images...")
+
             for i, download_task in enumerate(download_tasks):
+                if progress_dialog and progress_dialog.cancelled:
+                    return None, None, None
                 download_task.result()
-                print ("\033[A                             \033[A")
-                print (i+1, " / ", len(download_tasks))
+                if progress_dialog:
+                    progress_dialog.update_progress(manga_title, volume, chapter_num, f"Downloading page {i + 1} of {len(download_tasks)}", (i + 1) / len(download_tasks))
+                else:
+                    print ("\033[A                             \033[A")
+                    print (i+1, " / ", len(download_tasks))
 
             if file_PDF_fast.get() == 1:
                 output_folder = os.path.join(path, str(manga_title), "PDF (Fast)")
@@ -236,11 +270,12 @@ def UrlToImg(image_folders=None):
                 convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
                 os.remove(comic_info_path)
                 if file_MOBI.get() == 1:
-                    convert_cbz_to_mobi(output_cbz_path)
+                    convert_cbz_to_mobi(output_cbz_path, progress_dialog)
 
 
-        print("Finished!")
-        app.title("Finished!")
+        if not progress_dialog:
+            print("Finished!")
+            app.title("Finished!")
         return manga_title, image_folder, author
 
     except Exception as e:
@@ -464,21 +499,34 @@ def convert_images_to_pdf_slow(folder_path, output_path, chapter_title, chatpter
         c.setTitle(chatpter_num)
     c.save()
 
-def convert_images_to_cbz(folder_paths, output_path, comic_info_path):
-    print("Creating CBZ...")
-    app.title("Creating CBZ...")
+def convert_images_to_cbz(folder_paths, output_path, comic_info_path, progress_dialog=None):
+    if not progress_dialog:
+        print("Creating CBZ...")
+        app.title("Creating CBZ...")
 
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as cbz_file:
         cbz_file.write(comic_info_path, 'ComicInfo.xml')
+        total_images = 0
+        for folder_path in folder_paths:
+            total_images += len([f for f in glob.glob(os.path.join(folder_path, '*.png'))]) + \
+                           len([f for f in glob.glob(os.path.join(folder_path, '*.jpg'))]) + \
+                           len([f for f in glob.glob(os.path.join(folder_path, '*.jpeg'))])
+
+        images_processed = 0
         for folder_path in folder_paths:
             image_files = [f for f in glob.glob(os.path.join(folder_path, '*.png'))] + \
                           [f for f in glob.glob(os.path.join(folder_path, '*.jpg'))] + \
                           [f for f in glob.glob(os.path.join(folder_path, '*.jpeg'))]
             for image_file in image_files:
                 cbz_file.write(image_file, os.path.basename(image_file))
-def convert_cbz_to_mobi(cbz_file):
-    print("Converting to MOBI...")
-    app.title("Converting to MOBI...")
+                images_processed += 1
+                if progress_dialog:
+                    progress_dialog.update_progress(os.path.basename(output_path), "", "", f"Creating CBZ: {images_processed}/{total_images}", images_processed / total_images)
+
+def convert_cbz_to_mobi(cbz_file, progress_dialog=None):
+    if not progress_dialog:
+        print("Converting to MOBI...")
+        app.title("Converting to MOBI...")
 
     if not kcc_path:
         messagebox.showerror("Error", "KCC path not set. Please select the KCC folder first.")
@@ -490,6 +538,9 @@ def convert_cbz_to_mobi(cbz_file):
         shutil.copy(cbz_file, temp_cbz_path)
 
         output_mobi_path = os.path.join(kcc_path, "temp.mobi")
+
+        if progress_dialog:
+            progress_dialog.update_progress(os.path.basename(cbz_file), "", "", "Converting to MOBI...", 0.5)
 
         subprocess.run([
             os.path.join(kcc_path, "kcc-c2e.exe"),
@@ -506,14 +557,15 @@ def convert_cbz_to_mobi(cbz_file):
 
         final_mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
         final_mobi_path = os.path.join(os.path.dirname(cbz_file), final_mobi_filename)
-        print(output_mobi_path)
-        print(final_mobi_path)
         shutil.move(output_mobi_path, final_mobi_path)
 
         os.remove(temp_cbz_path)
 
-        print("MOBI conversion successful!")
-        app.title("MOBI conversion successful!")
+        if progress_dialog:
+            progress_dialog.update_progress(os.path.basename(cbz_file), "", "", "MOBI conversion successful!", 1)
+        else:
+            print("MOBI conversion successful!")
+            app.title("MOBI conversion successful!")
 
     except subprocess.CalledProcessError as e:
         print(f"Error during MOBI conversion: {e}")
@@ -533,6 +585,58 @@ def toggle_mobi_switch():
         file_MOBI.configure(state="disabled")
 
 # Gui section
+
+class ProgressDialog(customtkinter.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.title("Batch Conversion Progress")
+        self.geometry("400x230")
+        self.resizable(width=False, height=False)
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure((0, 1, 2, 3, 4), weight=1)
+
+        self.manga_label = customtkinter.CTkLabel(self, text="Manga: ")
+        self.manga_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+
+        self.volume_label = customtkinter.CTkLabel(self, text="Volume: ")
+        self.volume_label.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+
+        self.chapter_label = customtkinter.CTkLabel(self, text="Chapter: ")
+        self.chapter_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+
+        self.status_label = customtkinter.CTkLabel(self, text="Status: ")
+        self.status_label.grid(row=3, column=0, padx=10, pady=5, sticky="w")
+
+        self.progressbar = customtkinter.CTkProgressBar(self)
+        self.progressbar.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
+        self.progressbar.set(0)
+
+        self.button = customtkinter.CTkButton(self, text="Cancel", command=self.cancel)
+        self.button.grid(row=5, column=0, padx=10, pady=10)
+
+        self.cancelled = False
+
+    def update_progress(self, manga, volume, chapter, status, progress):
+        self.manga_label.configure(text=f"Manga: {manga}")
+        self.volume_label.configure(text=f"Volume: {volume}")
+        self.chapter_label.configure(text=f"Chapter: {chapter}")
+        self.status_label.configure(text=f"Status: {status}")
+        self.progressbar.set(progress)
+        self.update()
+
+    def complete(self):
+        self.status_label.configure(text="Status: Completed!")
+        self.progressbar.set(1)
+        self.button.configure(text="OK", command=self.destroy)
+        self.update()
+
+    def cancel(self):
+        self.cancelled = True
+        self.status_label.configure(text="Status: Cancelling...")
+        self.update()
+
 app = customtkinter.CTk()
 app.title(path)
 app.resizable(width=False, height=False)
