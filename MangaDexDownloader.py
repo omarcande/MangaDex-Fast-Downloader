@@ -123,6 +123,7 @@ def batchUrlToImg():
 
         volume_manga_title = ""
         author = ""
+        summary, year, content_rating, tags, manga_dex_url = "", "", "", [], ""
         total_chapters = len(chapter_list)
         processed_chapters = 0
         for volume, chapters in volumes.items():
@@ -136,11 +137,21 @@ def batchUrlToImg():
 
                 chapter_id = chapter['id']
                 # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
-                manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders, volume)
+                manga_title, image_folder, chapter_author, chapter_summary, chapter_year, chapter_content_rating, chapter_tags, chapter_manga_dex_url = UrlToImg(progress_dialog, image_folders, volume)
                 if manga_title and not volume_manga_title:
                     volume_manga_title = manga_title
                 if chapter_author and not author:
                     author = chapter_author
+                if chapter_summary and not summary:
+                    summary = chapter_summary
+                if chapter_year and not year:
+                    year = chapter_year
+                if chapter_content_rating and not content_rating:
+                    content_rating = chapter_content_rating
+                if chapter_tags and not tags:
+                    tags = chapter_tags
+                if chapter_manga_dex_url and not manga_dex_url:
+                    manga_dex_url = chapter_manga_dex_url
 
                 processed_chapters += 1
                 progress = processed_chapters / total_chapters
@@ -153,7 +164,7 @@ def batchUrlToImg():
                 volume_str = str(volume).zfill(2)
 
                 output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
-                comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
+                comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume, summary, year, content_rating, tags, manga_dex_url)
 
                 progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
                 convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path, progress_dialog)
@@ -179,7 +190,7 @@ def download_image(url, image_path):
 def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
     global chapter_id, mangadex_api
     try:
-        manga_title, chapter_title, chapter_num, author = get_manga_title_from_chapter(chapter_id)
+        manga_title, chapter_title, chapter_num, author, summary, year, content_rating, tags, manga_dex_url = get_manga_title_from_chapter(chapter_id)
         if progress_dialog:
             progress_dialog.update_progress(manga_title, volume, chapter_num, "Getting chapter info...", 0)
         else:
@@ -266,7 +277,7 @@ def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
                 os.makedirs(output_folder, exist_ok=True)
 
                 output_cbz_path = os.path.join(output_folder, f"{manga_title} - Chapter {chapter_num}.cbz")
-                comic_info_path = create_comic_info(output_folder, manga_title, author, None)
+                comic_info_path = create_comic_info(output_folder, manga_title, author, None, summary, year, content_rating, tags, manga_dex_url)
                 convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
                 os.remove(comic_info_path)
                 if file_MOBI.get() == 1:
@@ -276,11 +287,11 @@ def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
         if not progress_dialog:
             print("Finished!")
             app.title("Finished!")
-        return manga_title, image_folder, author
+        return manga_title, image_folder, author, summary, year, content_rating, tags, manga_dex_url
 
     except Exception as e:
         print(f"Error:", e)
-        return None, None, None
+        return (None,) * 8
 
 def get_manga_title_from_chapter(chapter_id):
     chapter_url = f"https://api.mangadex.org/chapter/{chapter_id}"
@@ -294,12 +305,17 @@ def get_manga_title_from_chapter(chapter_id):
 
     if response.status_code == 200:
         data = response.json()
+        manga_id = None
         for relationship in data["data"]["relationships"]:
             if relationship["type"] == "manga":
                 manga_id = relationship["id"]
                 break
 
-        manga_title, author = get_manga_title(manga_id)
+        if manga_id:
+            manga_title, author, summary, year, content_rating, tags, manga_dex_url = get_manga_title(manga_id)
+        else:
+            manga_title, author, summary, year, content_rating, tags, manga_dex_url = (None,) * 7
+
         chapter_title = data["data"]["attributes"]["title"]
         chapter_num = data["data"]["attributes"]["chapter"]
         if manga_title:
@@ -308,10 +324,10 @@ def get_manga_title_from_chapter(chapter_id):
         if chapter_title:
             chapter_title = remove_invalid(chapter_title)
 
-        return manga_title, chapter_title, chapter_num, author
+        return manga_title, chapter_title, chapter_num, author, summary, year, content_rating, tags, manga_dex_url
     else:
         print(f"Error: {response.status_code}")
-        return None, None, None, None
+        return (None,) * 9
 
 def get_manga_title(manga_id):
     manga_url = f"https://api.mangadex.org/manga/{manga_id}"
@@ -322,24 +338,34 @@ def get_manga_title(manga_id):
         "includes[]": "author"
     }
 
-    response  = make_request(manga_url, headers=headers, params=params)
+    response = make_request(manga_url, headers=headers, params=params)
 
     if response.status_code == 200:
         data = response.json()
+        attributes = data["data"]["attributes"]
+
         author = "Unknown"
         for relationship in data["data"]["relationships"]:
             if relationship["type"] == "author":
                 author = relationship["attributes"]["name"]
                 break
-        try:
-            title = data["data"]["attributes"]["title"]["en"]
-            return title, author
-        except:
-            title = data["data"]["attributes"]["title"]["ja-ro"]
-            return title, author
+
+        title = attributes["title"].get("en") or attributes["title"].get("ja-ro")
+
+        summary = attributes["description"].get("en", "")
+
+        year = attributes.get("year")
+
+        content_rating = attributes.get("contentRating")
+
+        tags = [tag["attributes"]["name"]["en"] for tag in attributes["tags"]]
+
+        manga_dex_url = f"https://mangadex.org/title/{manga_id}"
+
+        return title, author, summary, year, content_rating, tags, manga_dex_url
     else:
         print(f"Error: {response.status_code}")
-        return None, None
+        return None, None, None, None, None, None, None
 
 def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, translatedLanguage="en",
                      contentRating=["safe", "suggestive", "erotica", "pornographic"]):
@@ -417,7 +443,7 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
             break
     return chapter_list
 
-def create_comic_info(output_folder, series, author, volume):
+def create_comic_info(output_folder, series, author, volume, summary, year, content_rating, tags, manga_dex_url):
     comic_info = ET.Element('ComicInfo', {'xmlns:xsd': 'http://www.w3.org/2001/XMLSchema', 'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'})
 
     series_element = ET.SubElement(comic_info, 'Series')
@@ -429,6 +455,26 @@ def create_comic_info(output_folder, series, author, volume):
     if volume is not None:
         volume_element = ET.SubElement(comic_info, 'Volume')
         volume_element.text = str(volume)
+
+    if summary:
+        summary_element = ET.SubElement(comic_info, 'Summary')
+        summary_element.text = summary
+
+    if year:
+        year_element = ET.SubElement(comic_info, 'Year')
+        year_element.text = str(year)
+
+    if content_rating:
+        rating_element = ET.SubElement(comic_info, 'AgeRating')
+        rating_element.text = content_rating.capitalize()
+
+    if tags:
+        tags_element = ET.SubElement(comic_info, 'Genre')
+        tags_element.text = ", ".join(tags)
+
+    if manga_dex_url:
+        web_element = ET.SubElement(comic_info, 'Web')
+        web_element.text = manga_dex_url
 
     tree = ET.ElementTree(comic_info)
 
