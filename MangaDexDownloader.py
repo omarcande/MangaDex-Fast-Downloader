@@ -115,55 +115,55 @@ def batchUrlToImg():
         chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
 
         volumes = {}
-    for chapter in chapter_list:
-        volume = chapter['volume']
-        if volume not in volumes:
-            volumes[volume] = []
-        volumes[volume].append(chapter)
+        for chapter in chapter_list:
+            volume = chapter['volume']
+            if volume not in volumes:
+                volumes[volume] = []
+            volumes[volume].append(chapter)
 
-    volume_manga_title = ""
-    author = ""
-    total_chapters = len(chapter_list)
-    processed_chapters = 0
-    for volume, chapters in volumes.items():
-        image_folders = []
-        for i, chapter in enumerate(chapters):
-            if progress_dialog.cancelled:
-                progress_dialog.destroy()
-                return
+        volume_manga_title = ""
+        author = ""
+        total_chapters = len(chapter_list)
+        processed_chapters = 0
+        for volume, chapters in volumes.items():
+            image_folders = []
+            for i, chapter in enumerate(chapters):
+                if progress_dialog.cancelled:
+                    progress_dialog.destroy()
+                    return
 
-            clear_screen()
+                clear_screen()
 
-            chapter_id = chapter['id']
-            # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
-            manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders, volume)
-            if manga_title and not volume_manga_title:
-                volume_manga_title = manga_title
-            if chapter_author and not author:
-                author = chapter_author
+                chapter_id = chapter['id']
+                # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
+                manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders, volume)
+                if manga_title and not volume_manga_title:
+                    volume_manga_title = manga_title
+                if chapter_author and not author:
+                    author = chapter_author
 
-            processed_chapters += 1
-            progress = processed_chapters / total_chapters
-            progress_dialog.update_progress(volume_manga_title, volume, f"Ch. {chapter['chapter']}", f"Downloading Chapter {i + 1} / {len(chapters)}", progress)
+                processed_chapters += 1
+                progress = processed_chapters / total_chapters
+                progress_dialog.update_progress(volume_manga_title, volume, f"Ch. {chapter['chapter']}", f"Downloading Chapter {i + 1} / {len(chapters)}", progress)
 
-        if file_CBZ.get() == 1 and image_folders:
-            output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
-            os.makedirs(output_folder, exist_ok=True)
+            if file_CBZ.get() == 1 and image_folders:
+                output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
+                os.makedirs(output_folder, exist_ok=True)
 
-            volume_str = str(volume).zfill(2)
+                volume_str = str(volume).zfill(2)
 
-            output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
-            comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
+                output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
+                comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
 
-            progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
-            convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path, progress_dialog)
-            os.remove(comic_info_path)
+                progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
+                convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path, progress_dialog)
+                os.remove(comic_info_path)
 
-            if file_MOBI.get() == 1:
-                progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Converting to MOBI...", progress)
-                convert_cbz_to_mobi(output_cbz_path, progress_dialog)
+                if file_MOBI.get() == 1:
+                    progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Converting to MOBI...", progress)
+                    convert_cbz_to_mobi(output_cbz_path, progress_dialog)
 
-    progress_dialog.complete()
+        progress_dialog.complete()
     finally:
         main_button_3.configure(state="normal")
 
