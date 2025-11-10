@@ -103,15 +103,18 @@ def clear_screen():
 def batchUrlToImg():
     global chapter_id, mangadex_api
 
+    main_button_3.configure(state="disabled")
     progress_dialog = ProgressDialog(app)
+    try:
+        progress_dialog.update_progress("", "", "", "Fetching chapter list...", 0)
 
-    start_chapter, end_chapter = get_start_end()
+        start_chapter, end_chapter = get_start_end()
 
-    link = entry.get()
-    manga_id = link
-    chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
+        link = entry.get()
+        manga_id = link
+        chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
 
-    volumes = {}
+        volumes = {}
     for chapter in chapter_list:
         volume = chapter['volume']
         if volume not in volumes:
@@ -133,7 +136,7 @@ def batchUrlToImg():
 
             chapter_id = chapter['id']
             # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
-            manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders)
+            manga_title, image_folder, chapter_author = UrlToImg(progress_dialog, image_folders, volume)
             if manga_title and not volume_manga_title:
                 volume_manga_title = manga_title
             if chapter_author and not author:
@@ -161,6 +164,8 @@ def batchUrlToImg():
                 convert_cbz_to_mobi(output_cbz_path, progress_dialog)
 
     progress_dialog.complete()
+    finally:
+        main_button_3.configure(state="normal")
 
 def download_image(url, image_path):
     headers = {
@@ -171,12 +176,12 @@ def download_image(url, image_path):
     with open(image_path, 'wb') as f:
         f.write(response.content)
 
-def UrlToImg(progress_dialog=None, image_folders=None):
+def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
     global chapter_id, mangadex_api
     try:
         manga_title, chapter_title, chapter_num, author = get_manga_title_from_chapter(chapter_id)
         if progress_dialog:
-            progress_dialog.update_progress(manga_title, "", chapter_num, "Getting chapter info...", 0)
+            progress_dialog.update_progress(manga_title, volume, chapter_num, "Getting chapter info...", 0)
         else:
             print(manga_title)
             if chapter_title: print(chapter_title)
@@ -229,7 +234,7 @@ def UrlToImg(progress_dialog=None, image_folders=None):
                     return None, None, None
                 download_task.result()
                 if progress_dialog:
-                    progress_dialog.update_progress(manga_title, "", chapter_num, f"Downloading page {i + 1} of {len(download_tasks)}", (i + 1) / len(download_tasks))
+                    progress_dialog.update_progress(manga_title, volume, chapter_num, f"Downloading page {i + 1} of {len(download_tasks)}", (i + 1) / len(download_tasks))
                 else:
                     print ("\033[A                             \033[A")
                     print (i+1, " / ", len(download_tasks))
