@@ -43,7 +43,7 @@ print("PDF(slow) is pretty much useless, in some rare cases it looks better (a L
 print("CBZ is probably the ideal format if you have a dedicated reader\n")
 
 path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
-kcc_path = ""
+kcc_path = "G:/KCC"
 mangadex_api = r"https://api.mangadex.org/at-home/server/"
 chapter_id = ""
 link = ""
@@ -308,9 +308,7 @@ def get_manga_title(manga_id):
 
 def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, translatedLanguage="en",
                      contentRating=["safe", "suggestive", "erotica", "pornographic"]):
-
     chapter_list = []
-
     url = f"https://api.mangadex.org/manga/{manga_id}/feed"
     headers = {
         "Accept": "application/vnd.api+json",
@@ -323,18 +321,14 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
         "order[volume]": "asc",
         "order[chapter]": "asc"
     }
-
     seen_chapters = set()  # Keep track of seen chapter_num values
-
     while url:
-        response  = make_request(url, headers=headers, params=params)
+        response = make_request(url, headers=headers, params=params)
         # After the first request, we will use the 'next' URL which contains all parameters.
         # So we clear the params object to avoid sending them twice.
         params = {}
-
         if response.status_code == 200:
             data = response.json()
-
             chapters_data = data.get("data", [])
             for chapter_data in chapters_data:
                 attributes = chapter_data.get("attributes", {})
@@ -343,35 +337,49 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
                 volume_num = attributes.get("volume")
                 external_chapter = attributes.get("externalUrl")
 
+                # Normalize chapter number: treat None or empty string as "0"
+                if chapter_num is None or (isinstance(chapter_num, str) and chapter_num.strip() == ""):
+                    chapter_num = "0"
+
+                # Skip if already seen (deduplication)
                 if chapter_num in seen_chapters:
                     continue
 
+                # Apply range filtering only if chapter_num is numeric
+                skip = False
                 if chapter_num is not None:
                     try:
                         num = float(chapter_num)
                         if start_chapter is not None and num < start_chapter:
-                            continue
+                            skip = True
                         if end_chapter is not None and num > end_chapter:
-                            continue
+                            skip = True
                     except (ValueError, TypeError):
+                        # Non-numeric chapters (e.g. "Prologue", "Extra") are included unless filtered elsewhere
                         pass
 
-                if external_chapter is None:
-                    chapter_list.append({"id": chapter_id, "chapter": chapter_num, "volume": volume_num})
-                    if chapter_num:
-                        seen_chapters.add(chapter_num)
+                if skip:
+                    continue
 
+                # Only include internal chapters (no external URL)
+                if external_chapter is None:
+                    chapter_list.append({
+                        "id": chapter_id,
+                        "chapter": chapter_num,
+                        "volume": volume_num
+                    })
+                    seen_chapters.add(chapter_num)
+
+            # Pagination: follow the 'next' link
             next_link = data.get("links", {}).get("next")
             if next_link:
                 url = next_link
             else:
                 url = None
-
         else:
             print(f"Error: {response.status_code}")
             app.title("Something went wrong...")
             break
-
     return chapter_list
 
 def create_comic_info(output_folder, series, author, volume):
@@ -481,11 +489,11 @@ def convert_cbz_to_mobi(cbz_file):
         import shutil
         shutil.copy(cbz_file, temp_cbz_path)
 
-        output_mobi_path = os.path.join(kcc_path, "output.mobi")
+        output_mobi_path = os.path.join(kcc_path, "temp.mobi")
 
         subprocess.run([
             os.path.join(kcc_path, "kcc-c2e.exe"),
-            "temp.cbz",
+            temp_cbz_path,
             "-p", "KO",
             "-f", "MOBI",
             "--forcecolor",
@@ -493,11 +501,13 @@ def convert_cbz_to_mobi(cbz_file):
             "-u",
             "-m",
             "--blackborders",
-            "-o", "output.mobi"
+            "-o", kcc_path
         ], cwd=kcc_path, check=True)
 
         final_mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
         final_mobi_path = os.path.join(os.path.dirname(cbz_file), final_mobi_filename)
+        print(output_mobi_path)
+        print(final_mobi_path)
         shutil.move(output_mobi_path, final_mobi_path)
 
         os.remove(temp_cbz_path)
