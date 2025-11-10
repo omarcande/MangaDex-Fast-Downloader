@@ -21,6 +21,8 @@ import glob
 from ratelimit import limits, sleep_and_retry
 import xml.etree.ElementTree as ET
 import subprocess
+import threading
+import time
 
 myappid = 'frnono.manga.downloader'
 if os.name == 'nt':
@@ -47,6 +49,9 @@ kcc_path = "G:/KCC"
 mangadex_api = r"https://api.mangadex.org/at-home/server/"
 chapter_id = ""
 link = ""
+search_timer = None
+selected_manga_id = None
+
 
 @sleep_and_retry
 @limits(calls=5, period=1)
@@ -101,17 +106,24 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def batchUrlToImg():
-    global chapter_id, mangadex_api
-
     main_button_3.configure(state="disabled")
     progress_dialog = ProgressDialog(app)
+
+    batch_thread = threading.Thread(target=batch_process_thread, args=(progress_dialog,))
+    batch_thread.start()
+
+def batch_process_thread(progress_dialog):
+    global chapter_id, mangadex_api, selected_manga_id
     try:
-        progress_dialog.update_progress("", "", "", "Fetching chapter list...", 0)
+        app.after(0, progress_dialog.update_progress, "", "", "", "Fetching chapter list...", 0)
 
         start_chapter, end_chapter = get_start_end()
 
-        link = entry.get()
-        manga_id = link
+        if selected_manga_id:
+            manga_id = selected_manga_id
+        else:
+            manga_id = entry.get()
+
         chapter_list = get_chapter_list(manga_id, start_chapter, end_chapter)
 
         volumes = {}
@@ -130,13 +142,12 @@ def batchUrlToImg():
             image_folders = []
             for i, chapter in enumerate(chapters):
                 if progress_dialog.cancelled:
-                    progress_dialog.destroy()
+                    app.after(0, progress_dialog.destroy)
                     return
 
                 clear_screen()
 
                 chapter_id = chapter['id']
-                # We pass the image_folders list to UrlToImg, which will append the path of the downloaded images' folder.
                 manga_title, image_folder, chapter_author, chapter_summary, chapter_year, chapter_content_rating, chapter_tags, chapter_manga_dex_url = UrlToImg(progress_dialog, image_folders, volume)
                 if manga_title and not volume_manga_title:
                     volume_manga_title = manga_title
@@ -155,7 +166,7 @@ def batchUrlToImg():
 
                 processed_chapters += 1
                 progress = processed_chapters / total_chapters
-                progress_dialog.update_progress(volume_manga_title, volume, f"Ch. {chapter['chapter']}", f"Downloading Chapter {i + 1} / {len(chapters)}", progress)
+                app.after(0, progress_dialog.update_progress, volume_manga_title, volume, f"Ch. {chapter['chapter']}", f"Downloading Chapter {i + 1} / {len(chapters)}", progress)
 
             if file_CBZ.get() == 1 and image_folders:
                 output_folder = os.path.join(path, str(volume_manga_title), "CBZ")
@@ -166,17 +177,17 @@ def batchUrlToImg():
                 output_cbz_path = os.path.join(output_folder, f"{volume_manga_title} Vol. {volume_str}.cbz")
                 comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume, summary, year, content_rating, tags, manga_dex_url)
 
-                progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
+                app.after(0, progress_dialog.update_progress, volume_manga_title, volume, f"Vol. {volume}", "Creating CBZ...", progress)
                 convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path, progress_dialog)
                 os.remove(comic_info_path)
 
                 if file_MOBI.get() == 1:
-                    progress_dialog.update_progress(volume_manga_title, volume, f"Vol. {volume}", "Converting to MOBI...", progress)
+                    app.after(0, progress_dialog.update_progress, volume_manga_title, volume, f"Vol. {volume}", "Converting to MOBI...", progress)
                     convert_cbz_to_mobi(output_cbz_path, progress_dialog)
 
-        progress_dialog.complete()
+        app.after(0, progress_dialog.complete)
     finally:
-        main_button_3.configure(state="normal")
+        app.after(0, lambda: main_button_3.configure(state="normal"))
 
 def download_image(url, image_path):
     headers = {
@@ -192,7 +203,7 @@ def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
     try:
         manga_title, chapter_title, chapter_num, author, summary, year, content_rating, tags, manga_dex_url = get_manga_title_from_chapter(chapter_id)
         if progress_dialog:
-            progress_dialog.update_progress(manga_title, volume, chapter_num, "Getting chapter info...", 0)
+            app.after(0, progress_dialog.update_progress, manga_title, volume, chapter_num, "Getting chapter info...", 0)
         else:
             print(manga_title)
             if chapter_title: print(chapter_title)
@@ -245,7 +256,7 @@ def UrlToImg(progress_dialog=None, image_folders=None, volume=None):
                     return None, None, None
                 download_task.result()
                 if progress_dialog:
-                    progress_dialog.update_progress(manga_title, volume, chapter_num, f"Downloading page {i + 1} of {len(download_tasks)}", (i + 1) / len(download_tasks))
+                    app.after(0, progress_dialog.update_progress, manga_title, volume, chapter_num, f"Downloading page {i + 1} of {len(download_tasks)}", (i + 1) / len(download_tasks))
                 else:
                     print ("\033[A                             \033[A")
                     print (i+1, " / ", len(download_tasks))
@@ -567,7 +578,7 @@ def convert_images_to_cbz(folder_paths, output_path, comic_info_path, progress_d
                 cbz_file.write(image_file, os.path.basename(image_file))
                 images_processed += 1
                 if progress_dialog:
-                    progress_dialog.update_progress(os.path.basename(output_path), "", "", f"Creating CBZ: {images_processed}/{total_images}", images_processed / total_images)
+                    app.after(0, progress_dialog.update_progress, os.path.basename(output_path), "", "", f"Creating CBZ: {images_processed}/{total_images}", images_processed / total_images)
 
 def convert_cbz_to_mobi(cbz_file, progress_dialog=None):
     if not progress_dialog:
@@ -586,7 +597,7 @@ def convert_cbz_to_mobi(cbz_file, progress_dialog=None):
         output_mobi_path = os.path.join(kcc_path, "temp.mobi")
 
         if progress_dialog:
-            progress_dialog.update_progress(os.path.basename(cbz_file), "", "", "Converting to MOBI...", 0.5)
+            app.after(0, progress_dialog.update_progress, os.path.basename(cbz_file), "", "", "Converting to MOBI...", 0.5)
 
         subprocess.run([
             os.path.join(kcc_path, "kcc-c2e.exe"),
@@ -629,6 +640,71 @@ def toggle_mobi_switch():
     else:
         file_MOBI.deselect()
         file_MOBI.configure(state="disabled")
+
+def schedule_search(event):
+    global search_timer
+    if search_timer:
+        app.after_cancel(search_timer)
+    search_timer = app.after(300, perform_search)
+
+def perform_search():
+    query = entry.get()
+    if len(query) < 3:
+        listbox.grid_remove()
+        return
+
+    listbox.grid()
+    listbox.delete(0, END)
+    listbox.insert(END, "Searching...")
+
+    thread = threading.Thread(target=search_manga, args=(query,))
+    thread.start()
+
+def search_manga(query):
+    url = "https://api.mangadex.org/manga"
+    params = {
+        "title": query,
+        "limit": 10,
+        "contentRating[]": ["safe", "suggestive", "erotica", "pornographic"],
+        "order[relevance]": "desc"
+    }
+    headers = {
+        "Accept": "application/vnd.api+json",
+    }
+    response = make_request(url, headers=headers, params=params)
+    if response.status_code == 200:
+        results = response.json()["data"]
+        app.after(0, update_listbox, results)
+    else:
+        app.after(0, update_listbox, [])
+
+def update_listbox(results):
+    listbox.delete(0, END)
+    global manga_results
+    manga_results = results
+
+    if not results:
+        listbox.insert(END, "No results found.")
+        return
+
+    for i, result in enumerate(results):
+        title = result["attributes"]["title"].get("en") or result["attributes"]["title"].get("ja-ro")
+        listbox.insert(END, f"{i+1}. {title}")
+
+def on_select(event):
+    global selected_manga_id
+
+    selection = event.widget.curselection()
+    if selection:
+        index = selection[0]
+        selected_manga = manga_results[index]
+        selected_manga_id = selected_manga["id"]
+
+        title = selected_manga["attributes"]["title"].get("en") or selected_manga["attributes"]["title"].get("ja-ro")
+        entry.delete(0, END)
+        entry.insert(0, title)
+
+        listbox.grid_remove()
 
 # Gui section
 
@@ -686,7 +762,7 @@ class ProgressDialog(customtkinter.CTkToplevel):
 app = customtkinter.CTk()
 app.title(path)
 app.resizable(width=False, height=False)
-app.geometry(f"{600}x{200}")
+app.geometry(f"{600}x{400}")
 app.iconbitmap("Icon/nerd.ico")
 
 app.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
@@ -705,8 +781,14 @@ file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c")
 file_MOBI.grid(row=1, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 file_MOBI.configure(state="disabled")
 
-entry = customtkinter.CTkEntry(app, placeholder_text="Enter manga/chapter id...")
+entry = customtkinter.CTkEntry(app, placeholder_text="Search manga title...")
 entry.grid(row=3, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
+entry.bind("<KeyRelease>", schedule_search)
+
+listbox = Listbox(app, height=8, width=50)
+listbox.grid(row=4, column=0, columnspan=3, padx=(10, 0), pady=(10, 0), sticky="swe")
+listbox.grid_remove()
+listbox.bind("<<ListboxSelect>>", on_select)
 
 entry_start = customtkinter.CTkEntry(app, placeholder_text="Start Chapter")
 entry_start.grid(row=2, column=0, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
