@@ -20,6 +20,7 @@ import zipfile
 import glob
 from ratelimit import limits, sleep_and_retry
 import xml.etree.ElementTree as ET
+import subprocess
 
 myappid = 'frnono.manga.downloader'
 if os.name == 'nt':
@@ -42,6 +43,7 @@ print("PDF(slow) is pretty much useless, in some rare cases it looks better (a L
 print("CBZ is probably the ideal format if you have a dedicated reader\n")
 
 path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
+kcc_path = "G:/KCC"
 mangadex_api = r"https://api.mangadex.org/at-home/server/"
 chapter_id = ""
 link = ""
@@ -63,6 +65,17 @@ def ChangeDirec():
     if path == "/":
         path = f"{os.environ['UserProfile']}/Downloads/" if os.name == 'nt' else "/tmp/"
     app.title(path)
+
+def SelectKCCPath():
+    global kcc_path
+    selected_path = askdirectory(title='Select KCC Folder')
+    if selected_path:
+        kcc_executable = os.path.join(selected_path, 'kcc-c2e.exe')
+        if os.path.exists(kcc_executable):
+            kcc_path = selected_path
+            messagebox.showinfo("KCC Path", f"KCC path set to: {kcc_path}")
+        else:
+            messagebox.showerror("Error", "kcc-c2e.exe not found in the selected folder.")
 
 def get_start_end():
     try:
@@ -128,6 +141,8 @@ def batchUrlToImg():
             comic_info_path = create_comic_info(output_folder, volume_manga_title, author, volume)
             convert_images_to_cbz(image_folders, output_cbz_path, comic_info_path)
             os.remove(comic_info_path)
+            if file_MOBI.get() == 1:
+                convert_cbz_to_mobi(output_cbz_path)
 
     messagebox.showinfo("Finished!", "All chapters have been processed.")
 
@@ -220,6 +235,8 @@ def UrlToImg(image_folders=None):
                 comic_info_path = create_comic_info(output_folder, manga_title, author, None)
                 convert_images_to_cbz([image_folder], output_cbz_path, comic_info_path)
                 os.remove(comic_info_path)
+                if file_MOBI.get() == 1:
+                    convert_cbz_to_mobi(output_cbz_path)
 
 
         print("Finished!")
@@ -291,9 +308,7 @@ def get_manga_title(manga_id):
 
 def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, translatedLanguage="en",
                      contentRating=["safe", "suggestive", "erotica", "pornographic"]):
-
     chapter_list = []
-
     url = f"https://api.mangadex.org/manga/{manga_id}/feed"
     headers = {
         "Accept": "application/vnd.api+json",
@@ -306,18 +321,14 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
         "order[volume]": "asc",
         "order[chapter]": "asc"
     }
-
     seen_chapters = set()  # Keep track of seen chapter_num values
-
     while url:
-        response  = make_request(url, headers=headers, params=params)
+        response = make_request(url, headers=headers, params=params)
         # After the first request, we will use the 'next' URL which contains all parameters.
         # So we clear the params object to avoid sending them twice.
         params = {}
-
         if response.status_code == 200:
             data = response.json()
-
             chapters_data = data.get("data", [])
             for chapter_data in chapters_data:
                 attributes = chapter_data.get("attributes", {})
@@ -326,35 +337,49 @@ def get_chapter_list(manga_id, start_chapter, end_chapter, limit=500, offset=0, 
                 volume_num = attributes.get("volume")
                 external_chapter = attributes.get("externalUrl")
 
+                # Normalize chapter number: treat None or empty string as "0"
+                if chapter_num is None or (isinstance(chapter_num, str) and chapter_num.strip() == ""):
+                    chapter_num = "0"
+
+                # Skip if already seen (deduplication)
                 if chapter_num in seen_chapters:
                     continue
 
+                # Apply range filtering only if chapter_num is numeric
+                skip = False
                 if chapter_num is not None:
                     try:
                         num = float(chapter_num)
                         if start_chapter is not None and num < start_chapter:
-                            continue
+                            skip = True
                         if end_chapter is not None and num > end_chapter:
-                            continue
+                            skip = True
                     except (ValueError, TypeError):
+                        # Non-numeric chapters (e.g. "Prologue", "Extra") are included unless filtered elsewhere
                         pass
 
-                if external_chapter is None:
-                    chapter_list.append({"id": chapter_id, "chapter": chapter_num, "volume": volume_num})
-                    if chapter_num:
-                        seen_chapters.add(chapter_num)
+                if skip:
+                    continue
 
+                # Only include internal chapters (no external URL)
+                if external_chapter is None:
+                    chapter_list.append({
+                        "id": chapter_id,
+                        "chapter": chapter_num,
+                        "volume": volume_num
+                    })
+                    seen_chapters.add(chapter_num)
+
+            # Pagination: follow the 'next' link
             next_link = data.get("links", {}).get("next")
             if next_link:
                 url = next_link
             else:
                 url = None
-
         else:
             print(f"Error: {response.status_code}")
             app.title("Something went wrong...")
             break
-
     return chapter_list
 
 def create_comic_info(output_folder, series, author, volume):
@@ -451,6 +476,61 @@ def convert_images_to_cbz(folder_paths, output_path, comic_info_path):
                           [f for f in glob.glob(os.path.join(folder_path, '*.jpeg'))]
             for image_file in image_files:
                 cbz_file.write(image_file, os.path.basename(image_file))
+def convert_cbz_to_mobi(cbz_file):
+    print("Converting to MOBI...")
+    app.title("Converting to MOBI...")
+
+    if not kcc_path:
+        messagebox.showerror("Error", "KCC path not set. Please select the KCC folder first.")
+        return
+
+    try:
+        temp_cbz_path = os.path.join(kcc_path, "temp.cbz")
+        import shutil
+        shutil.copy(cbz_file, temp_cbz_path)
+
+        output_mobi_path = os.path.join(kcc_path, "temp.mobi")
+
+        subprocess.run([
+            os.path.join(kcc_path, "kcc-c2e.exe"),
+            temp_cbz_path,
+            "-p", "KO",
+            "-f", "MOBI",
+            "--forcecolor",
+            "--eraserainbow",
+            "-u",
+            "-m",
+            "--blackborders",
+            "-o", kcc_path
+        ], cwd=kcc_path, check=True)
+
+        final_mobi_filename = os.path.splitext(os.path.basename(cbz_file))[0] + ".mobi"
+        final_mobi_path = os.path.join(os.path.dirname(cbz_file), final_mobi_filename)
+        print(output_mobi_path)
+        print(final_mobi_path)
+        shutil.move(output_mobi_path, final_mobi_path)
+
+        os.remove(temp_cbz_path)
+
+        print("MOBI conversion successful!")
+        app.title("MOBI conversion successful!")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error during MOBI conversion: {e}")
+        app.title("MOBI conversion failed!")
+    except FileNotFoundError:
+        print("kcc-c2e.exe not found in the specified KCC path.")
+        app.title("kcc-c2e.exe not found!")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        app.title("An unexpected error occurred!")
+
+def toggle_mobi_switch():
+    if file_CBZ.get() == 1:
+        file_MOBI.configure(state="normal")
+    else:
+        file_MOBI.deselect()
+        file_MOBI.configure(state="disabled")
 
 # Gui section
 app = customtkinter.CTk()
@@ -468,8 +548,12 @@ file_PDF_fast.grid(row=0, column=0, columnspan=1, padx=(10, 0), pady=(10, 0), st
 file_PDF_slow = customtkinter.CTkSwitch(app, text="PDF (slow)", progress_color=("#ffed9c"))
 file_PDF_slow.grid(row=0, column=1, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
-file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"))
+file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"), command=toggle_mobi_switch)
 file_CBZ.grid(row=0, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
+
+file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c"))
+file_MOBI.grid(row=1, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
+file_MOBI.configure(state="disabled")
 
 entry = customtkinter.CTkEntry(app, placeholder_text="Enter manga/chapter id...")
 entry.grid(row=3, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
@@ -482,6 +566,9 @@ entry_end.grid(row=2, column=1, columnspan=1, padx=(10, 0), pady=(0, 20), sticky
 
 main_button_1 = customtkinter.CTkButton(master=app, text="Change Directory", fg_color="transparent", hover_color=("#242323"), border_width=2, command=ChangeDirec)
 main_button_1.grid(row=0, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
+
+kcc_button = customtkinter.CTkButton(master=app, text="Select KCC Path", fg_color="transparent", hover_color=("#242323"), border_width=2, command=SelectKCCPath)
+kcc_button.grid(row=1, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
 
 main_button_2 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Go!", hover_color=("#242323"), border_width=2, command=get_chap_id)
 main_button_2.grid(row=3, column=3, padx=(20, 10), pady=(0, 0), sticky="se")
