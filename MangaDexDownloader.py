@@ -689,7 +689,10 @@ def update_listbox(results):
 
     for i, result in enumerate(results):
         title = result["attributes"]["title"].get("en") or result["attributes"]["title"].get("ja-ro")
-        listbox.insert(END, f"{i+1}. {title}")
+        lastVolume = result["attributes"]["lastVolume"] or "N/A"
+        lastChapter = result["attributes"]["lastChapter"] or "N/A"
+        status = result["attributes"]["status"] or "N/A"
+        listbox.insert(END, f"{i+1}. {title} [V:{lastVolume} |C:{lastChapter} |S:{status}]")
 
 def on_select(event):
     global selected_manga_id
@@ -701,8 +704,11 @@ def on_select(event):
         selected_manga_id = selected_manga["id"]
 
         title = selected_manga["attributes"]["title"].get("en") or selected_manga["attributes"]["title"].get("ja-ro")
+        lastVolume = selected_manga["attributes"]["lastVolume"] or "N/A"
+        lastChapter = selected_manga["attributes"]["lastChapter"] or "N/A"
+        status = selected_manga["attributes"]["status"] or "N/A"
         entry.delete(0, END)
-        entry.insert(0, title)
+        entry.insert(0, f"{title} [V:{lastVolume} |C:{lastChapter} |S:{status}]")
 
         listbox.grid_remove()
 
@@ -785,7 +791,7 @@ entry = customtkinter.CTkEntry(app, placeholder_text="Search manga title...")
 entry.grid(row=3, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
 entry.bind("<KeyRelease>", schedule_search)
 
-listbox = Listbox(app, height=8, width=50)
+listbox = Listbox(app, height=8, width=50, font=("Segoe UI", 14))
 listbox.grid(row=4, column=0, columnspan=3, padx=(10, 0), pady=(10, 0), sticky="swe")
 listbox.grid_remove()
 listbox.bind("<<ListboxSelect>>", on_select)
