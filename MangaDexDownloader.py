@@ -95,15 +95,28 @@ def get_start_end():
 
     return start_chapter, end_chapter
 
-def get_chap_id():
-    global chapter_id, mangadex_api, link
-
-    link = entry.get()
-    chapter_id = link
-    UrlToImg()
-
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
+
+def download_chapter_by_id():
+    main_button_2.configure(state="disabled")
+    progress_dialog = ProgressDialog(app)
+
+    download_thread = threading.Thread(target=download_chapter_thread, args=(progress_dialog,))
+    download_thread.start()
+
+def download_chapter_thread(progress_dialog):
+    global chapter_id
+    try:
+        chapter_id = entry_chapter_id.get()
+        if not chapter_id:
+            return
+
+        UrlToImg(progress_dialog)
+        app.after(0, progress_dialog.complete)
+    finally:
+        app.after(0, lambda: main_button_2.configure(state="normal"))
+
 
 def batchUrlToImg():
     main_button_3.configure(state="disabled")
@@ -712,6 +725,12 @@ def on_select(event):
 
         listbox.grid_remove()
 
+def toggle_download_button_state(event=None):
+    if entry_chapter_id.get():
+        main_button_2.configure(state="normal")
+    else:
+        main_button_2.configure(state="disabled")
+
 # Gui section
 
 class ProgressDialog(customtkinter.CTkToplevel):
@@ -768,11 +787,11 @@ class ProgressDialog(customtkinter.CTkToplevel):
 app = customtkinter.CTk()
 app.title(path)
 app.resizable(width=False, height=False)
-app.geometry(f"{600}x{400}")
+app.geometry(f"{600}x{450}")
 app.iconbitmap("Icon/nerd.ico")
 
 app.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
-app.grid_rowconfigure((0, 1, 2, 3, 4), weight=1)
+app.grid_rowconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
 file_PDF_fast = customtkinter.CTkSwitch(app, text="PDF (fast)", progress_color=("#ffed9c"))
 file_PDF_fast.grid(row=0, column=0, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
@@ -787,32 +806,37 @@ file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c")
 file_MOBI.grid(row=1, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 file_MOBI.configure(state="disabled")
 
+entry_chapter_id = customtkinter.CTkEntry(app, placeholder_text="Enter Chapter ID...")
+entry_chapter_id.grid(row=2, column=0, columnspan=3, padx=(10, 0), pady=(10, 10), sticky="swe")
+entry_chapter_id.bind("<KeyRelease>", toggle_download_button_state)
+
+main_button_2 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Download Chapter", hover_color=("#242323"), border_width=2, command=download_chapter_by_id)
+main_button_2.grid(row=2, column=3, padx=(20, 10), pady=(10, 10), sticky="se")
+main_button_2.configure(state="disabled")
+
+entry_start = customtkinter.CTkEntry(app, placeholder_text="Start Chapter")
+entry_start.grid(row=3, column=0, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
+
+entry_end = customtkinter.CTkEntry(app, placeholder_text="End Chapter")
+entry_end.grid(row=3, column=1, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
+
+main_button_3 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Batch", hover_color=("#242323"), border_width=2, command=batchUrlToImg)
+main_button_3.grid(row=3, column=3, padx=(20, 10), pady=(0, 20), sticky="se")
+
 entry = customtkinter.CTkEntry(app, placeholder_text="Search manga title...")
-entry.grid(row=3, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
+entry.grid(row=4, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
 entry.bind("<KeyRelease>", schedule_search)
 
 listbox = Listbox(app, height=8, width=50, font=("Segoe UI", 14))
-listbox.grid(row=4, column=0, columnspan=3, padx=(10, 0), pady=(10, 0), sticky="swe")
+listbox.grid(row=5, column=0, columnspan=3, padx=(10, 0), pady=(10, 0), sticky="swe")
 listbox.grid_remove()
 listbox.bind("<<ListboxSelect>>", on_select)
-
-entry_start = customtkinter.CTkEntry(app, placeholder_text="Start Chapter")
-entry_start.grid(row=2, column=0, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
-
-entry_end = customtkinter.CTkEntry(app, placeholder_text="End Chapter")
-entry_end.grid(row=2, column=1, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
 
 main_button_1 = customtkinter.CTkButton(master=app, text="Change Directory", fg_color="transparent", hover_color=("#242323"), border_width=2, command=ChangeDirec)
 main_button_1.grid(row=0, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
 
 kcc_button = customtkinter.CTkButton(master=app, text="Select KCC Path", fg_color="transparent", hover_color=("#242323"), border_width=2, command=SelectKCCPath)
 kcc_button.grid(row=1, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
-
-main_button_2 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Go!", hover_color=("#242323"), border_width=2, command=get_chap_id)
-main_button_2.grid(row=3, column=3, padx=(20, 10), pady=(0, 0), sticky="se")
-
-main_button_3 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Batch", hover_color=("#242323"), border_width=2, command=batchUrlToImg)
-main_button_3.grid(row=2, column=3, padx=(20, 10), pady=(0, 20), sticky="se")
 
 # RUN APP
 app.mainloop()
