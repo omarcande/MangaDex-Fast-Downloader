@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 import subprocess
 import threading
 import time
+import base64
 
 myappid = 'frnono.manga.downloader'
 if os.name == 'nt':
@@ -52,6 +53,9 @@ link = ""
 search_timer = None
 selected_manga_id = None
 
+komga_search_timer = None
+komga_results = []
+selected_komga_book_id = None
 
 @sleep_and_retry
 @limits(calls=5, period=1)
@@ -731,6 +735,143 @@ def toggle_download_button_state(event=None):
     else:
         main_button_2.configure(state="disabled")
 
+def schedule_komga_search(event):
+    global komga_search_timer
+    if komga_search_timer:
+        app.after_cancel(komga_search_timer)
+    komga_search_timer = app.after(300, perform_komga_search)
+
+def perform_komga_search():
+    query = komga_entry.get()
+    if len(query) < 3:
+        komga_listbox.grid_remove()
+        return
+
+    komga_listbox.grid()
+    komga_listbox.delete(0, END)
+    komga_listbox.insert(END, "Searching...")
+
+    thread = threading.Thread(target=search_komga, args=(query,))
+    thread.start()
+
+def search_komga(query):
+    komga_url = komga_url_entry.get()
+    komga_user = komga_user_entry.get()
+    komga_password = komga_password_entry.get()
+    url = f"{komga_url}/api/v1/books"
+    params = {"search": query}
+    headers = get_komga_auth_headers()
+
+    try:
+        response = make_request(url, headers=headers, params=params)
+        if response.status_code == 200:
+            results = response.json()["content"]
+            app.after(0, update_komga_listbox, results)
+        elif response.status_code == 401:
+            app.after(0, update_komga_listbox, [], "Authentication failed. Please check your credentials.")
+        else:
+            app.after(0, update_komga_listbox, [], f"Error: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        app.after(0, update_komga_listbox, [], "Error: Could not connect to Komga server.")
+
+def update_komga_listbox(results, error_message=None):
+    komga_listbox.delete(0, END)
+    global komga_results
+    komga_results = results
+
+    if error_message:
+        komga_listbox.insert(END, error_message)
+        return
+
+    if not results:
+        komga_listbox.insert(END, "No results found.")
+        return
+
+    for i, result in enumerate(results):
+        title = result["metadata"]["title"]
+        series = result["seriesTitle"]
+        komga_listbox.insert(END, f"{i+1}. {series} - {title}")
+
+def get_komga_auth_headers():
+    komga_user = komga_user_entry.get()
+    komga_password = komga_password_entry.get()
+    auth = base64.b64encode(f"{komga_user}:{komga_password}".encode()).decode()
+    return {"Authorization": f"Basic {auth}"}
+
+def on_komga_select(event):
+    global selected_komga_book_id
+    selection = event.widget.curselection()
+    if selection:
+        index = selection[0]
+        selected_book = komga_results[index]
+        selected_komga_book_id = selected_book["id"]
+        title = selected_book["metadata"]["title"]
+        series = selected_book["seriesTitle"]
+        komga_entry.delete(0, END)
+        komga_entry.insert(0, f"{series} - {title}")
+        komga_listbox.grid_remove()
+
+def download_komga_book():
+    komga_download_button.configure(state="disabled")
+    progress_dialog = ProgressDialog(app)
+    download_thread = threading.Thread(target=download_komga_book_thread, args=(progress_dialog,))
+    download_thread.start()
+
+def download_komga_book_thread(progress_dialog):
+    global selected_komga_book_id
+    if not selected_komga_book_id:
+        return
+
+    try:
+        book_info = next((book for book in komga_results if book['id'] == selected_komga_book_id), None)
+        if not book_info:
+            return
+
+        series_title = remove_invalid(book_info['seriesTitle'])
+        book_title = remove_invalid(book_info['metadata']['title'])
+
+        output_folder = os.path.join(path, series_title, "CBZ")
+        os.makedirs(output_folder, exist_ok=True)
+
+        output_cbz_path = os.path.join(output_folder, f"{series_title} - {book_title}.cbz")
+
+        komga_url = komga_url_entry.get()
+        komga_user = komga_user_entry.get()
+        komga_password = komga_password_entry.get()
+        url = f"{komga_url}/api/v1/books/{selected_komga_book_id}/file"
+        headers = get_komga_auth_headers()
+
+        response = requests.get(url, headers=headers, stream=True)
+        if response.status_code != 200:
+            messagebox.showerror("Error", f"Failed to download file: {response.status_code}")
+            progress_dialog.destroy()
+            return
+
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded_size = 0
+        last_progress = -1
+
+        with open(output_cbz_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if progress_dialog.cancelled:
+                    return
+                f.write(chunk)
+                downloaded_size += len(chunk)
+                progress = downloaded_size / total_size if total_size > 0 else 0
+                if progress - last_progress >= 0.01:
+                    app.after(0, progress_dialog.update_progress, series_title, "", book_title, "Downloading CBZ...", progress)
+                    last_progress = progress
+
+        app.after(0, progress_dialog.update_progress, series_title, "", book_title, "Converting to MOBI...", 0.5)
+        convert_cbz_to_mobi(output_cbz_path, progress_dialog)
+
+        app.after(0, progress_dialog.complete)
+    except Exception as e:
+        app.after(0, lambda: messagebox.showerror("Error", f"An error occurred: {e}"))
+        app.after(0, progress_dialog.destroy)
+    finally:
+        app.after(0, lambda: komga_download_button.configure(state="normal"))
+
 # Gui section
 
 class ProgressDialog(customtkinter.CTkToplevel):
@@ -790,53 +931,92 @@ app.resizable(width=False, height=False)
 app.geometry(f"{600}x{450}")
 app.iconbitmap("Icon/nerd.ico")
 
-app.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
-app.grid_rowconfigure((0, 1, 2, 3, 4, 5), weight=1)
+app.grid_columnconfigure(0, weight=1)
+app.grid_rowconfigure(0, weight=1)
 
-file_PDF_fast = customtkinter.CTkSwitch(app, text="PDF (fast)", progress_color=("#ffed9c"))
+tabview = customtkinter.CTkTabview(app)
+tabview.grid(row=0, column=0, sticky="nsew")
+
+mangadex_tab = tabview.add("MangaDex")
+komga_tab = tabview.add("Komga")
+
+mangadex_tab.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+mangadex_tab.grid_rowconfigure((0, 1, 2, 3, 4, 5), weight=1)
+
+file_PDF_fast = customtkinter.CTkSwitch(mangadex_tab, text="PDF (fast)", progress_color=("#ffed9c"))
 file_PDF_fast.grid(row=0, column=0, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
-file_PDF_slow = customtkinter.CTkSwitch(app, text="PDF (slow)", progress_color=("#ffed9c"))
+file_PDF_slow = customtkinter.CTkSwitch(mangadex_tab, text="PDF (slow)", progress_color=("#ffed9c"))
 file_PDF_slow.grid(row=0, column=1, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
-file_CBZ = customtkinter.CTkSwitch(app, text="CBZ", progress_color=("#ffed9c"), command=toggle_mobi_switch)
+file_CBZ = customtkinter.CTkSwitch(mangadex_tab, text="CBZ", progress_color=("#ffed9c"), command=toggle_mobi_switch)
 file_CBZ.grid(row=0, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 
-file_MOBI = customtkinter.CTkSwitch(app, text="MOBI", progress_color=("#ffed9c"))
+file_MOBI = customtkinter.CTkSwitch(mangadex_tab, text="MOBI", progress_color=("#ffed9c"))
 file_MOBI.grid(row=1, column=2, columnspan=1, padx=(10, 0), pady=(10, 0), sticky="nw")
 file_MOBI.configure(state="disabled")
 
-entry_chapter_id = customtkinter.CTkEntry(app, placeholder_text="Enter Chapter ID...")
+entry_chapter_id = customtkinter.CTkEntry(mangadex_tab, placeholder_text="Enter Chapter ID...")
 entry_chapter_id.grid(row=2, column=0, columnspan=3, padx=(10, 0), pady=(10, 10), sticky="swe")
 entry_chapter_id.bind("<KeyRelease>", toggle_download_button_state)
 
-main_button_2 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Download Chapter", hover_color=("#242323"), border_width=2, command=download_chapter_by_id)
+main_button_2 = customtkinter.CTkButton(master=mangadex_tab, fg_color="transparent", text="Download Chapter", hover_color=("#242323"), border_width=2, command=download_chapter_by_id)
 main_button_2.grid(row=2, column=3, padx=(20, 10), pady=(10, 10), sticky="se")
 main_button_2.configure(state="disabled")
 
-entry_start = customtkinter.CTkEntry(app, placeholder_text="Start Chapter")
+entry_start = customtkinter.CTkEntry(mangadex_tab, placeholder_text="Start Chapter")
 entry_start.grid(row=3, column=0, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
 
-entry_end = customtkinter.CTkEntry(app, placeholder_text="End Chapter")
+entry_end = customtkinter.CTkEntry(mangadex_tab, placeholder_text="End Chapter")
 entry_end.grid(row=3, column=1, columnspan=1, padx=(10, 0), pady=(0, 20), sticky="sw")
 
-main_button_3 = customtkinter.CTkButton(master=app, fg_color="transparent", text="Batch", hover_color=("#242323"), border_width=2, command=batchUrlToImg)
+main_button_3 = customtkinter.CTkButton(master=mangadex_tab, fg_color="transparent", text="Batch", hover_color=("#242323"), border_width=2, command=batchUrlToImg)
 main_button_3.grid(row=3, column=3, padx=(20, 10), pady=(0, 20), sticky="se")
 
-entry = customtkinter.CTkEntry(app, placeholder_text="Search manga title...")
+entry = customtkinter.CTkEntry(mangadex_tab, placeholder_text="Search manga title...")
 entry.grid(row=4, column=0, columnspan=3, padx=(10, 0), pady=(0, 0), sticky="swe")
 entry.bind("<KeyRelease>", schedule_search)
 
-listbox = Listbox(app, height=8, width=50, font=("Segoe UI", 14))
+listbox = Listbox(mangadex_tab, height=8, width=50, font=("Segoe UI", 14))
 listbox.grid(row=5, column=0, columnspan=3, padx=(10, 0), pady=(10, 0), sticky="swe")
 listbox.grid_remove()
 listbox.bind("<<ListboxSelect>>", on_select)
 
-main_button_1 = customtkinter.CTkButton(master=app, text="Change Directory", fg_color="transparent", hover_color=("#242323"), border_width=2, command=ChangeDirec)
+main_button_1 = customtkinter.CTkButton(master=mangadex_tab, text="Change Directory", fg_color="transparent", hover_color=("#242323"), border_width=2, command=ChangeDirec)
 main_button_1.grid(row=0, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
 
-kcc_button = customtkinter.CTkButton(master=app, text="Select KCC Path", fg_color="transparent", hover_color=("#242323"), border_width=2, command=SelectKCCPath)
+kcc_button = customtkinter.CTkButton(master=mangadex_tab, text="Select KCC Path", fg_color="transparent", hover_color=("#242323"), border_width=2, command=SelectKCCPath)
 kcc_button.grid(row=1, column=3, padx=(20, 10), pady=(10, 20), sticky="n")
+
+komga_tab.grid_columnconfigure((0, 1, 2, 3), weight=1)
+komga_tab.grid_rowconfigure((0, 1, 2, 3, 4, 5), weight=1)
+
+komga_url_label = customtkinter.CTkLabel(komga_tab, text="Komga URL:")
+komga_url_label.grid(row=0, column=0, padx=(10, 0), pady=(10, 0), sticky="w")
+komga_url_entry = customtkinter.CTkEntry(komga_tab, placeholder_text="http://localhost:8080")
+komga_url_entry.grid(row=0, column=1, columnspan=3, padx=(0, 10), pady=(10, 0), sticky="ew")
+
+komga_user_label = customtkinter.CTkLabel(komga_tab, text="Username:")
+komga_user_label.grid(row=1, column=0, padx=(10, 0), pady=(10, 0), sticky="w")
+komga_user_entry = customtkinter.CTkEntry(komga_tab)
+komga_user_entry.grid(row=1, column=1, columnspan=3, padx=(0, 10), pady=(10, 0), sticky="ew")
+
+komga_password_label = customtkinter.CTkLabel(komga_tab, text="Password:")
+komga_password_label.grid(row=2, column=0, padx=(10, 0), pady=(10, 0), sticky="w")
+komga_password_entry = customtkinter.CTkEntry(komga_tab, show="*")
+komga_password_entry.grid(row=2, column=1, columnspan=3, padx=(0, 10), pady=(10, 0), sticky="ew")
+
+komga_entry = customtkinter.CTkEntry(komga_tab, placeholder_text="Search Komga...")
+komga_entry.grid(row=3, column=0, columnspan=4, padx=(10, 10), pady=(10, 0), sticky="nsew")
+komga_entry.bind("<KeyRelease>", schedule_komga_search)
+
+komga_listbox = Listbox(komga_tab, height=10, width=50, font=("Segoe UI", 14))
+komga_listbox.grid(row=4, column=0, columnspan=4, padx=(10, 10), pady=(10, 0), sticky="nsew")
+komga_listbox.bind("<<ListboxSelect>>", on_komga_select)
+
+komga_download_button = customtkinter.CTkButton(master=komga_tab, text="Download & Convert", fg_color="transparent", hover_color=("#242323"), border_width=2, command=download_komga_book)
+komga_download_button.grid(row=5, column=0, columnspan=4, padx=(10, 10), pady=(10, 10), sticky="nsew")
+
 
 # RUN APP
 app.mainloop()
